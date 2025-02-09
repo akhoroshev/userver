@@ -46,6 +46,8 @@ struct LogExtraValueVisitor {
     void operator()(const std::string& val) { string_value = val; }
 
     void operator()(int val) { string_value = std::to_string(val); }
+
+    void operator()(const logging::JsonString& val) { string_value = val.Value(); }
 };
 
 void GetTagObject(

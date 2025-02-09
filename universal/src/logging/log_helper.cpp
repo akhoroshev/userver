@@ -107,12 +107,8 @@ constexpr bool NeedsQuoteEscaping(char c) { return c == '\"' || c == '\\'; }
 
 }  // namespace
 
-LogHelper::LogHelper(
-    LoggerRef logger,
-    Level level,
-    LogClass log_class,
-    const utils::impl::SourceLocation& location
-) noexcept
+LogHelper::LogHelper(LoggerRef logger, Level level, LogClass log_class, const utils::impl::SourceLocation& location)
+    noexcept
     : pimpl_(ThreadLocalMemPool<Impl>::Pop(logger, level, log_class, location)) {
     try {
         logger.PrependCommonTags(GetTagWriter());
@@ -276,11 +272,6 @@ LogHelper& LogHelper::PutSwTag(std::string_view key, std::string_view value) noe
     } catch (...) {
         InternalLoggingError("Failed to extend log with LogExtra&&");
     }
-    return *this;
-}
-
-LogHelper& LogHelper::operator<<(const LogExtra::Value& value) noexcept {
-    std::visit([this](const auto& unwrapped) { *this << unwrapped; }, value);
     return *this;
 }
 

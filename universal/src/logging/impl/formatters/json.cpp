@@ -40,7 +40,10 @@ void Json::AddTag(std::string_view key, const LogExtra::Value& value) {
     std::visit(
         [&, this](const auto& x) {
             sb_.Key(key);
-            WriteToStream(x, sb_);
+            if constexpr (std::is_same_v<decltype(x), const JsonString&>)
+                sb_.WriteRawString(x.Value());
+            else
+                WriteToStream(x, sb_);
         },
         value
     );
