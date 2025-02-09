@@ -221,7 +221,9 @@ void Logger::SetAttributeValue(
             [&](long long x) { destination->set_int_value(x); },
             [&](unsigned long long x) { destination->set_int_value(x); },
             [&](double x) { destination->set_double_value(x); },
-            [&](const std::string& x) { destination->set_string_value(x); }},
+            [&](const std::string& x) { destination->set_string_value(x); },
+            [&](const logging::JsonString& x) { destination->set_string_value(x.Value()); }
+        },
         value
     );
 }
@@ -258,7 +260,8 @@ void Logger::SendingLoop(Queue::Consumer& consumer, LogClient& log_client, Trace
                     [&scope_logs](const opentelemetry::proto::logs::v1::LogRecord& action) {
                         auto log_records = scope_logs->add_log_records();
                         *log_records = action;
-                    }},
+                    }
+                },
                 action
             );
         } while (consumer.Pop(action, deadline));
