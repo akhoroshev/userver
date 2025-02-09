@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file userver/ugrpc/server/pipeline.hpp
+/// @file userver/ugrpc/middlewares/pipeline.hpp
 /// @brief Lists all available middlewares and builds their order of execution.
 
 #include <unordered_map>
@@ -10,13 +10,13 @@
 #include <userver/utils/meta_light.hpp>
 #include <userver/yaml_config/fwd.hpp>
 
-#include <userver/ugrpc/server/impl/middleware_pipeline_config.hpp>
+#include <userver/ugrpc/impl/middleware_pipeline_config.hpp>
 #include <userver/ugrpc/server/middlewares/fwd.hpp>
 #include <userver/ugrpc/server/service_base.hpp>
 
 USERVER_NAMESPACE_BEGIN
 
-namespace ugrpc::server {
+namespace ugrpc::middlewares {
 
 /// @brief The dependency type between middlewares.
 ///
@@ -48,7 +48,7 @@ class MiddlewarePipeline final {
 public:
     explicit MiddlewarePipeline(Dependencies&& deps);
 
-    std::vector<std::string> GetPerServiceMiddlewares(const MiddlewareServiceConfig& config) const;
+    std::vector<std::string> GetPerServiceMiddlewares(const MiddlewareRunnerConfig& config) const;
 
     const MiddlewareOrderedList& GetOrderedList() const { return pipeline_; }
 
@@ -80,10 +80,6 @@ std::string EndOfGroup() {
 /// middlewares | middlewares names to use | `{}`
 class MiddlewarePipelineComponent final : public components::ComponentBase {
 public:
-    /// @ingroup userver_component_names
-    /// @brief The default name of ugrpc::server::MiddlewarePipelineComponent
-    static constexpr std::string_view kName = "grpc-server-middlewares-pipeline";
-
     MiddlewarePipelineComponent(const components::ComponentConfig& config, const components::ComponentContext& context);
 
     static yaml_config::Schema GetStaticConfigSchema();
@@ -180,13 +176,13 @@ MiddlewareDependencyBuilder MiddlewareDependencyBuilder::InGroup() && {
     return std::move(*this).Before(impl::EndOfGroup<Group>(), DependencyType::kWeak);
 }
 
-}  // namespace ugrpc::server
+}  // namespace ugrpc::middlewares
 
 template <>
-inline constexpr bool components::kHasValidate<ugrpc::server::MiddlewarePipelineComponent> = true;
+inline constexpr bool components::kHasValidate<ugrpc::middlewares::MiddlewarePipelineComponent> = true;
 
 template <>
-inline constexpr auto components::kConfigFileMode<ugrpc::server::MiddlewarePipelineComponent> =
+inline constexpr auto components::kConfigFileMode<ugrpc::middlewares::MiddlewarePipelineComponent> =
     ConfigFileMode::kNotRequired;
 
 USERVER_NAMESPACE_END

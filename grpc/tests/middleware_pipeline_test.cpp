@@ -1,8 +1,9 @@
 #include <userver/utest/utest.hpp>
 
-#include <ugrpc/server/impl/middlewares_graph.hpp>
+#include <ugrpc/impl/middlewares_graph.hpp>
+#include <userver/formats/yaml/serialize.hpp>
+#include <userver/ugrpc/middlewares/pipeline.hpp>
 #include <userver/ugrpc/server/middlewares/groups.hpp>
-#include <userver/ugrpc/server/middlewares/pipeline.hpp>
 
 #include <userver/ugrpc/server/middlewares/baggage/component.hpp>
 #include <userver/ugrpc/server/middlewares/congestion_control/component.hpp>
@@ -16,8 +17,8 @@ USERVER_NAMESPACE_BEGIN
 
 namespace {
 
-using Builder = ugrpc::server::MiddlewareDependencyBuilder;
-using OrderedList = ugrpc::server::impl::MiddlewareOrderedList;
+using Builder = ugrpc::middlewares::MiddlewareDependencyBuilder;
+using OrderedList = ugrpc::middlewares::impl::MiddlewareOrderedList;
 
 using Log = ugrpc::server::middlewares::log::Component;
 using Baggage = ugrpc::server::middlewares::baggage::Component;
@@ -25,29 +26,29 @@ using Deadline = ugrpc::server::middlewares::deadline_propagation::Component;
 using Congestion = ugrpc::server::middlewares::congestion_control::Component;
 using HeadersPropagator = ugrpc::server::middlewares::headers_propagator::Component;
 
-constexpr auto kStrongConnect = ugrpc::server::DependencyType::kStrong;
-constexpr auto kWeakConnect = ugrpc::server::DependencyType::kWeak;
+constexpr auto kStrongConnect = ugrpc::middlewares::DependencyType::kStrong;
+constexpr auto kWeakConnect = ugrpc::middlewares::DependencyType::kWeak;
 
-const auto kEmptyConfig = ugrpc::server::impl::MiddlewareServiceConfig{
+const auto kEmptyConfig = ugrpc::middlewares::impl::MiddlewareRunnerConfig{
     {},
-    /* disable_user_pipeline_middlewares=*/false,
-    /* disable_all_pipeline_middlewares=*/false,
+    /* disable_user_group=*/false,
+    /* disable_all=*/false,
 };
 
 template <typename Middleware>
-ugrpc::server::impl::MiddlewareEnabled Mid(bool enabed = true) {
+ugrpc::middlewares::impl::MiddlewareEnabled Mid(bool enabed = true) {
     return {std::string{Middleware::kName}, enabed};
 }
 
 template <typename Group, typename Before, typename After>
-std::pair<std::string, ugrpc::server::impl::MiddlewareDependency> Dependency(
-    ugrpc::server::DependencyType con_type = ugrpc::server::DependencyType::kWeak
+std::pair<std::string, ugrpc::middlewares::impl::MiddlewareDependency> Dependency(
+    ugrpc::middlewares::DependencyType con_type = ugrpc::middlewares::DependencyType::kWeak
 ) {
     return {
         std::string{Before::kName}, Builder().InGroup<Group>().template After<After>(con_type).Extract(Before::kName)};
 }
 
-ugrpc::server::impl::Dependencies kDefaultDependencies{
+ugrpc::middlewares::impl::Dependencies kDefaultDependencies{
     {std::string{Log::kName}, Builder().InGroup<ugrpc::server::groups::Logging>().Extract(Log::kName)},
     {std::string{Congestion::kName}, Builder().InGroup<ugrpc::server::groups::Core>().Extract(Congestion::kName)},
     {std::string{Deadline::kName},
@@ -56,6 +57,13 @@ ugrpc::server::impl::Dependencies kDefaultDependencies{
     {std::string{HeadersPropagator::kName},
      Builder().InGroup<ugrpc::server::groups::User>().Extract(HeadersPropagator::kName)},
 };
+
+yaml_config::YamlConfig TrueConf() {
+    return yaml_config::YamlConfig(formats::yaml::FromString("enabled: true"), formats::yaml::Value{});
+}
+yaml_config::YamlConfig FalseConf() {
+    return yaml_config::YamlConfig(formats::yaml::FromString("enabled: false"), formats::yaml::Value{});
+}
 
 struct A1 final {
     static constexpr std::string_view kName = "a1";
@@ -91,7 +99,7 @@ TEST(MiddlewarePipeline, Empty) {
     auto dependencies = kDefaultDependencies;
     dependencies.clear();
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
     const auto& list = pipeline.GetOrderedList();
 
     ASSERT_TRUE(list.empty());
@@ -100,7 +108,7 @@ TEST(MiddlewarePipeline, Empty) {
 TEST(MiddlewarePipeline, SimpleList) {
     auto dependencies = kDefaultDependencies;
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
     const auto& list = pipeline.GetOrderedList();
 
     const OrderedList expected{
@@ -119,7 +127,7 @@ TEST(MiddlewarePipeline, DisableWeakConnection) {
     const bool disabled = false;
     dependencies["grpc-server-logging"].enabled = disabled;
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
     const auto& list = pipeline.GetOrderedList();
 
     const OrderedList expected{
@@ -141,7 +149,7 @@ TEST(MiddlewarePipeline, DisableStrongConnection) {
     dependencies.erase(std::string{Deadline::kName});
     dependencies.insert(Dependency<ugrpc::server::groups::Core, Deadline, Congestion>(kStrongConnect));
 
-    EXPECT_UINVARIANT_FAILURE(ugrpc::server::impl::BuildPipeline(std::move(dependencies)));
+    EXPECT_UINVARIANT_FAILURE(ugrpc::middlewares::impl::BuildPipeline(std::move(dependencies)));
 }
 
 TEST(MiddlewarePipeline, DependencyToOtherGroup) {
@@ -149,7 +157,7 @@ TEST(MiddlewarePipeline, DependencyToOtherGroup) {
     // Dependency from User to Core is not allowed
     dependencies.insert(Dependency<ugrpc::server::groups::User, U1, Log>(kWeakConnect));
 
-    EXPECT_UINVARIANT_FAILURE(ugrpc::server::impl::BuildPipeline(std::move(dependencies)));
+    EXPECT_UINVARIANT_FAILURE(ugrpc::middlewares::impl::BuildPipeline(std::move(dependencies)));
 }
 
 TEST(MiddlewarePipeline, LexicographicOrder) {
@@ -158,7 +166,7 @@ TEST(MiddlewarePipeline, LexicographicOrder) {
     dependencies.insert(Dependency<ugrpc::server::groups::Logging, C2, Log>());
     dependencies.insert(Dependency<ugrpc::server::groups::Logging, C3, Log>());
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
     const auto& list = pipeline.GetOrderedList();
 
     const OrderedList expected{
@@ -172,7 +180,7 @@ TEST(MiddlewarePipeline, LexicographicOrder) {
         Mid<HeadersPropagator>(),
     };
     ASSERT_EQ(expected, list);
-};
+}
 
 TEST(MiddlewarePipeline, MultiDependency) {
     auto dependencies = kDefaultDependencies;
@@ -181,7 +189,7 @@ TEST(MiddlewarePipeline, MultiDependency) {
          Builder().InGroup<ugrpc::server::groups::Core>().After<Congestion>().Before<Deadline>().Extract(A2::kName)}
     );
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
     const auto& list = pipeline.GetOrderedList();
 
     const OrderedList expected{
@@ -193,7 +201,7 @@ TEST(MiddlewarePipeline, MultiDependency) {
         Mid<HeadersPropagator>(),
     };
     ASSERT_EQ(expected, list);
-};
+}
 
 TEST(MiddlewarePipeline, BetweenGroups) {
     auto dependencies = kDefaultDependencies;
@@ -202,7 +210,7 @@ TEST(MiddlewarePipeline, BetweenGroups) {
          Builder().After<ugrpc::server::groups::Logging>().Before<ugrpc::server::groups::Auth>().Extract(A1::kName)}
     );
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
     const auto& list = pipeline.GetOrderedList();
 
     const OrderedList expected{
@@ -214,21 +222,21 @@ TEST(MiddlewarePipeline, BetweenGroups) {
         Mid<HeadersPropagator>(),
     };
     ASSERT_EQ(expected, list);
-};
+}
 
 TEST(MiddlewarePipeline, DisablePerService) {
     auto dependencies = kDefaultDependencies;
 
     dependencies.emplace(std::string{U1::kName}, Builder().InGroup<ugrpc::server::groups::User>().Extract(U1::kName));
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
-    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::server::impl::MiddlewareServiceConfig{
-        {
-            {std::string{Deadline::kName}, {false}},
-            {std::string{U1::kName}, {false}},
-        },
-        /* disable_user_pipeline_middlewares=*/false,
-        /* disable_all_pipeline_middlewares=*/false,
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::middlewares::impl::MiddlewareRunnerConfig{
+        {{
+            {std::string{Deadline::kName}, FalseConf()},
+            {std::string{U1::kName}, FalseConf()},
+        }},
+        /* disable_user_group=*/false,
+        /* disable_all=*/false,
     });
 
     const std::vector<std::string> expected{
@@ -240,18 +248,18 @@ TEST(MiddlewarePipeline, DisablePerService) {
         // U1 is disabled
     };
     ASSERT_EQ(expected, list);
-};
+}
 
 TEST(MiddlewarePipeline, DisableUserGroup) {
     auto dependencies = kDefaultDependencies;
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
-    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::server::impl::MiddlewareServiceConfig{
-        {
-            {std::string{Baggage::kName}, {true}},
-        },
-        /* disable_user_pipeline_middlewares=*/true,
-        /* disable_all_pipeline_middlewares=*/false,
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::middlewares::impl::MiddlewareRunnerConfig{
+        {{
+            {std::string{Baggage::kName}, TrueConf()},
+        }},
+        /* disable_user_group=*/true,
+        /* disable_all=*/false,
     });
 
     const std::vector<std::string> expected{
@@ -262,7 +270,7 @@ TEST(MiddlewarePipeline, DisableUserGroup) {
         // Baggage and HeadersPropagator are disabled
     };
     ASSERT_EQ(expected, list);
-};
+}
 
 TEST(MiddlewarePipeline, DisableAllPipelineMiddlewares) {
     auto dependencies = kDefaultDependencies;
@@ -271,15 +279,15 @@ TEST(MiddlewarePipeline, DisableAllPipelineMiddlewares) {
         std::string{A1::kName}, Builder().InGroup<ugrpc::server::groups::Auth>().After<A2>().Extract(A1::kName)
     );
     dependencies.emplace(std::string{A2::kName}, Builder().InGroup<ugrpc::server::groups::Auth>().Extract(A2::kName));
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
-    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::server::impl::MiddlewareServiceConfig{
-        {
-            {std::string{A1::kName}, {true}},
-            {std::string{A2::kName}, {true}},
-            {std::string{Deadline::kName}, {true}},
-        },
-        /* disable_user_pipeline_middlewares=*/false,
-        /* disable_all_pipeline_middlewares=*/true,
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::middlewares::impl::MiddlewareRunnerConfig{
+        {{
+            {std::string{A1::kName}, TrueConf()},
+            {std::string{A2::kName}, TrueConf()},
+            {std::string{Deadline::kName}, TrueConf()},
+        }},
+        /* disable_user_group=*/false,
+        /* disable_all=*/true,
     });
 
     // Disable the global pipeline, but local force enabled, so there are middlewares from MiddlewareServiceConfig
@@ -289,19 +297,19 @@ TEST(MiddlewarePipeline, DisableAllPipelineMiddlewares) {
         std::string{Deadline::kName},
     };
     ASSERT_EQ(expected, list);
-};
+}
 
 TEST(MiddlewarePipeline, DisableAll) {
     auto dependencies = kDefaultDependencies;
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
-    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::server::impl::MiddlewareServiceConfig{
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::middlewares::impl::MiddlewareRunnerConfig{
         {},
-        /* disable_user_pipeline_middlewares=*/false,
-        /* disable_all_pipeline_middlewares=*/true,
+        /* disable_user_group=*/false,
+        /* disable_all=*/true,
     });
     ASSERT_TRUE(list.empty());
-};
+}
 
 TEST(MiddlewarePipeline, GlobalDisableAndPerServiceEnable) {
     auto dependencies = kDefaultDependencies;
@@ -309,14 +317,14 @@ TEST(MiddlewarePipeline, GlobalDisableAndPerServiceEnable) {
     dependencies["grpc-server-headers-propagator"].enabled = false;
     dependencies["grpc-server-baggage"].enabled = false;
 
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
-    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::server::impl::MiddlewareServiceConfig{
-        {
-            {std::string{Log::kName}, {true}},
-            {std::string{Baggage::kName}, {true}},
-        },
-        /* disable_user_pipeline_middlewares=*/false,
-        /* disable_all_pipeline_middlewares=*/false,
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const auto list = pipeline.GetPerServiceMiddlewares(ugrpc::middlewares::impl::MiddlewareRunnerConfig{
+        {{
+            {std::string{Log::kName}, TrueConf()},
+            {std::string{Baggage::kName}, TrueConf()},
+        }},
+        /* disable_user_group=*/false,
+        /* disable_all=*/false,
     });
 
     const std::vector<std::string> expected{
@@ -327,7 +335,7 @@ TEST(MiddlewarePipeline, GlobalDisableAndPerServiceEnable) {
         // HeadersPropagator is disabled
     };
     ASSERT_EQ(expected, list);
-};
+}
 
 TEST(MiddlewarePipeline, DurabilityOrder) {
     auto dependencies = kDefaultDependencies;
@@ -338,7 +346,7 @@ TEST(MiddlewarePipeline, DurabilityOrder) {
     dependencies.emplace(
         std::string{U2::kName}, Builder().InGroup<ugrpc::server::groups::User>().Before<U1>().Extract(U2::kName)
     );
-    const ugrpc::server::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline{std::move(dependencies)};
     const auto list = pipeline.GetPerServiceMiddlewares(kEmptyConfig);
 
     const std::vector<std::string> expected{
@@ -365,7 +373,7 @@ TEST(MiddlewarePipeline, DurabilityOrder) {
     // Disable 'u1' and now 'u2' is not Before<Baggage> but the order is durability, because `enabled` does not affect
     // connects
     dependencies2["u1"].enabled = false;
-    const ugrpc::server::impl::MiddlewarePipeline pipeline2{std::move(dependencies2)};
+    const ugrpc::middlewares::impl::MiddlewarePipeline pipeline2{std::move(dependencies2)};
     const auto list2 = pipeline2.GetPerServiceMiddlewares(kEmptyConfig);
 
     std::vector<std::string> expected2{
@@ -377,6 +385,6 @@ TEST(MiddlewarePipeline, DurabilityOrder) {
         std::string{Baggage::kName},
     };
     ASSERT_EQ(expected2, list2);
-};
+}
 
 USERVER_NAMESPACE_END

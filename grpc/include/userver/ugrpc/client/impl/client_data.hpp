@@ -12,9 +12,7 @@
 #include <userver/testsuite/grpc_control.hpp>
 #include <userver/utils/fixed_array.hpp>
 
-#include <userver/ugrpc/client/fwd.hpp>
-#include <userver/ugrpc/client/impl/channel_factory.hpp>
-#include <userver/ugrpc/client/impl/client_dependencies.hpp>
+#include <userver/ugrpc/client/impl/client_internals.hpp>
 #include <userver/ugrpc/client/impl/stub_any.hpp>
 #include <userver/ugrpc/client/impl/stub_pool.hpp>
 #include <userver/ugrpc/client/middlewares/fwd.hpp>
@@ -61,30 +59,27 @@ public:
     ClientData() = delete;
 
     template <typename Service>
-    ClientData(ClientDependencies&& dependencies, ugrpc::impl::StaticServiceMetadata metadata, std::in_place_type_t<Service>)
-        : dependencies_(std::move(dependencies)),
+    ClientData(ClientInternals&& internals, ugrpc::impl::StaticServiceMetadata metadata, std::in_place_type_t<Service>)
+        : internals_(std::move(internals)),
           metadata_(metadata),
           service_statistics_(&GetServiceStatistics()),
-          channel_factory_(CreateChannelFactory(dependencies_)),
           stub_state_(std::make_unique<rcu::Variable<StubState>>()) {
-        if (dependencies_.qos) {
-            SubscribeOnConfigUpdate<Service>(*dependencies_.qos);
+        if (internals_.qos) {
+            SubscribeOnConfigUpdate<Service>(*internals_.qos);
         } else {
-            ConstructStubState<typename Service::Stub>();
+            ConstructStubState<Service>(internals_.channel_arguments_builder.Build());
         }
     }
 
     template <typename Service>
-    ClientData(ClientDependencies&& dependencies, GenericClientTag, std::in_place_type_t<Service>)
-        : dependencies_(std::move(dependencies)),
-          channel_factory_(CreateChannelFactory(dependencies_)),
-          stub_state_(std::make_unique<rcu::Variable<StubState>>()) {
-        ConstructStubState<typename Service::Stub>();
+    ClientData(ClientInternals&& internals, GenericClientTag, std::in_place_type_t<Service>)
+        : internals_(std::move(internals)), stub_state_(std::make_unique<rcu::Variable<StubState>>()) {
+        ConstructStubState<Service>(internals_.channel_arguments_builder.Build());
     }
 
     ~ClientData();
 
-    ClientData(ClientData&&) noexcept = default;
+    ClientData(ClientData&&) = default;
     ClientData& operator=(ClientData&&) = delete;
 
     ClientData(const ClientData&) = delete;
@@ -106,37 +101,36 @@ public:
 
     grpc::CompletionQueue& NextQueue() const;
 
-    dynamic_config::Snapshot GetConfigSnapshot() const { return dependencies_.config_source.GetSnapshot(); }
+    dynamic_config::Snapshot GetConfigSnapshot() const { return internals_.config_source.GetSnapshot(); }
 
     ugrpc::impl::MethodStatistics& GetStatistics(std::size_t method_id) const;
 
     ugrpc::impl::MethodStatistics& GetGenericStatistics(std::string_view call_name) const;
 
-    std::string_view GetClientName() const { return dependencies_.client_name; }
+    std::string_view GetClientName() const { return internals_.client_name; }
 
-    const Middlewares& GetMiddlewares() const { return dependencies_.mws; }
+    const Middlewares& GetMiddlewares() const { return internals_.mws; }
 
     const ugrpc::impl::StaticServiceMetadata& GetMetadata() const;
 
-    const testsuite::GrpcControl& GetTestsuiteControl() const { return dependencies_.testsuite_grpc; }
+    const testsuite::GrpcControl& GetTestsuiteControl() const { return internals_.testsuite_grpc; }
 
     const dynamic_config::Key<ClientQos>* GetClientQos() const;
 
     rcu::ReadablePtr<StubState> GetStubState() const { return stub_state_->Read(); }
 
 private:
-    static ChannelFactory CreateChannelFactory(const ClientDependencies& dependencies);
-
     template <typename Stub>
     static utils::FixedArray<StubPool> MakeDedicatedStubs(
-        const ChannelFactory& channel_factory,
         const ugrpc::impl::StaticServiceMetadata& metadata,
-        const DedicatedMethodsConfig& dedicated_methods_config
+        const DedicatedMethodsConfig& dedicated_methods_config,
+        const ChannelFactory& channel_factory,
+        const grpc::ChannelArguments& channel_args
     ) {
         return utils::GenerateFixedArray(GetMethodsCount(metadata), [&](std::size_t method_id) {
             const auto method_channel_count =
                 GetMethodChannelCount(dedicated_methods_config, GetMethodName(metadata, method_id));
-            return StubPool::Create<Stub>(method_channel_count, channel_factory);
+            return StubPool::Create<Stub>(method_channel_count, channel_factory, channel_args);
         });
     }
 
@@ -144,33 +138,38 @@ private:
 
     template <typename Service>
     void SubscribeOnConfigUpdate(const dynamic_config::Key<ClientQos>& qos) {
-        config_subscription_ = dependencies_.config_source.UpdateAndListen(
-            this, dependencies_.client_name, &ClientData::OnConfigUpdate<Service>, qos
+        config_subscription_ = internals_.config_source.UpdateAndListen(
+            this, internals_.client_name, &ClientData::OnConfigUpdate<Service>, qos
         );
     }
 
     template <typename Service>
-    void OnConfigUpdate(const dynamic_config::Snapshot& /*config*/) {
-        ConstructStubState<typename Service::Stub>();
+    void OnConfigUpdate(const dynamic_config::Snapshot& config) {
+        UASSERT(internals_.qos);
+        const auto& client_qos = config[*internals_.qos];
+        ConstructStubState<Service>(internals_.channel_arguments_builder.Build(client_qos));
     }
 
-    template <typename Stub>
-    void ConstructStubState() {
-        auto stubs = StubPool::Create<Stub>(dependencies_.client_factory_settings.channel_count, channel_factory_);
+    template <typename Service>
+    void ConstructStubState(const grpc::ChannelArguments& channel_args) {
+        auto stubs = StubPool::Create<typename Service::Stub>(
+            internals_.channel_count, internals_.channel_factory, channel_args
+        );
 
         auto dedicated_stubs =
             metadata_.has_value()
-                ? MakeDedicatedStubs<Stub>(channel_factory_, *metadata_, dependencies_.dedicated_methods_config)
+                ? MakeDedicatedStubs<typename Service::Stub>(
+                      *metadata_, internals_.dedicated_methods_config, internals_.channel_factory, channel_args
+                  )
                 : utils::FixedArray<StubPool>{};
 
         stub_state_->Assign({std::move(stubs), std::move(dedicated_stubs)});
     }
 
-    ClientDependencies dependencies_;
+    ClientInternals internals_;
     std::optional<ugrpc::impl::StaticServiceMetadata> metadata_{std::nullopt};
     ugrpc::impl::ServiceStatistics* service_statistics_{nullptr};
 
-    ChannelFactory channel_factory_;
     std::unique_ptr<rcu::Variable<StubState>> stub_state_;
 
     // These fields must be the last ones

@@ -1,4 +1,4 @@
-#include <userver/ugrpc/server/middlewares/pipeline.hpp>
+#include <userver/ugrpc/middlewares/pipeline.hpp>
 
 #include <fmt/format.h>
 
@@ -7,13 +7,13 @@
 #include <userver/utils/assert.hpp>
 #include <userver/yaml_config/merge_schemas.hpp>
 
-#include <ugrpc/server/impl/middlewares_graph.hpp>
+#include <ugrpc/impl/middlewares_graph.hpp>
 #include <userver/ugrpc/server/middlewares/base.hpp>
 #include <userver/ugrpc/server/middlewares/groups.hpp>
 
 USERVER_NAMESPACE_BEGIN
 
-namespace ugrpc::server {
+namespace ugrpc::middlewares {
 
 namespace {
 
@@ -24,7 +24,7 @@ MakeDependencies(const components::ComponentContext& context, impl::MiddlewarePi
     impl::Dependencies dependencies{};
     dependencies.reserve(pipeline_config.middlewares.size());
     for (const auto& [mname, conf] : pipeline_config.middlewares) {
-        const auto* middleware = context.FindComponentOptional<MiddlewareFactoryComponentBase>(mname);
+        const auto* middleware = context.FindComponentOptional<server::MiddlewareFactoryComponentBase>(mname);
         if (middleware) {
             auto dep = middleware->GetMiddlewareDependency(utils::impl::InternalTag{});
             dep.enabled = conf.enabled;
@@ -45,24 +45,24 @@ namespace impl {
 
 MiddlewarePipeline::MiddlewarePipeline(Dependencies&& deps) : deps_(deps), pipeline_(BuildPipeline(std::move(deps))) {}
 
-std::vector<std::string> MiddlewarePipeline::GetPerServiceMiddlewares(const impl::MiddlewareServiceConfig& config
+std::vector<std::string> MiddlewarePipeline::GetPerServiceMiddlewares(const impl::MiddlewareRunnerConfig& config
 ) const {
     std::vector<std::string> res{};
-    const auto& per_service_middlewares = config.service_middlewares;
+    const auto& per_service_middlewares = config.middlewares;
     for (const auto& [name, enabled] : pipeline_) {
         if (const auto it = per_service_middlewares.find(name); it != per_service_middlewares.end()) {
             // Per-service enabled is high priority
-            if (it->second.enabled) {
+            if (it->second.As<BaseMiddlewareConfig>().enabled) {
                 res.push_back(name);
             }
             continue;
         }
-        if (!enabled || config.disable_all_pipeline_middlewares) {
+        if (!enabled || config.disable_all) {
             continue;
         }
-        if (config.disable_user_pipeline_middlewares) {
+        if (config.disable_user_group) {
             const auto it = deps_.find(name);
-            UASSERT_MSG(it != deps_.end(), fmt::format("Middleware `{}` does not exist", name));
+            UINVARIANT(it != deps_.end(), fmt::format("Middleware `{}` does not exist", name));
             if (it->second.group == "user") {
                 continue;
             }
@@ -123,6 +123,6 @@ impl::MiddlewareDependency MiddlewareDependencyBuilder::Extract(std::string_view
     return std::move(dep_);
 }
 
-}  // namespace ugrpc::server
+}  // namespace ugrpc::middlewares
 
 USERVER_NAMESPACE_END
