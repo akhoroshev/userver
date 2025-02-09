@@ -2,43 +2,44 @@
 
 #include <gtest/gtest.h>
 
+#include <userver/formats/json/value.hpp>
 #include <userver/utest/assert_macros.hpp>
 
 USERVER_NAMESPACE_BEGIN
 
 TEST(JsonString, ConstructFromJson) {
-  using formats::literals::operator""_json;
+    using formats::literals::operator""_json;
 
-  auto json = R"({
-    "a": "foo",
-    "b": {
-      "c": "d",
-      "e": [
-        1,
-        2
-      ]
-    }
-  })"_json;
+    auto json = R"({
+      "a": "foo",
+      "b": {
+        "c": "d",
+        "e": [
+          1,
+          2
+        ]
+      }
+    })"_json;
 
-  logging::JsonString json_string(json);
+    logging::JsonString json_string(json);
 
-  EXPECT_EQ(json_string.Value(), R"({"a":"foo","b":{"c":"d","e":[1,2]}})");
+    EXPECT_EQ(json_string.GetValue(), R"({"a":"foo","b":{"c":"d","e":[1,2]}})");
 }
 
 TEST(JsonString, ConstructFromString) {
-  std::string json = R"({"a":"foo",
+    std::string json = R"({"a":"foo",
 "b":{"c":"d","e":
 [1,2]}})";
 
-  logging::JsonString json_string(json);
+    logging::JsonString json_string(json);
 
-  EXPECT_EQ(json_string.Value(), R"({"a":"foo","b":{"c":"d","e":[1,2]}})");
+    EXPECT_EQ(json_string.GetValue(), R"({"a":"foo","b":{"c":"d","e":[1,2]}})");
 }
 
 TEST(JsonString, ConstructNull) {
-  logging::JsonString json_string;
+    logging::JsonString json_string;
 
-  EXPECT_EQ(json_string.Value(), R"(null)");
+    EXPECT_EQ(json_string.GetValue(), R"(null)");
 }
 
 USERVER_NAMESPACE_END
