@@ -53,7 +53,7 @@ void AddAttribute(Item& item, std::string_view key, const Value& value) {
             [mutable_value](float x) { mutable_value->set_double_value(x); },
             [mutable_value](double x) { mutable_value->set_double_value(x); },
             [mutable_value](const std::string& x) { mutable_value->set_string_value(x); },
-            [mutable_value](const logging::JsonString& x) { mutable_value->set_string_value(x.Value()); }
+            [mutable_value](const logging::JsonString& x) { mutable_value->set_string_value(std::string{x.Value()}); }
         },
         value
     );
